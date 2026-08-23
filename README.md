@@ -31,7 +31,7 @@ command (not required; all APIs used work with normal privileges).
 
 ## Configuration
 
-`%LOCALAPPDATA%\CopySec\config.json` is created on first run:
+`%USERPROFILE%\AppData\Local\CopySec\config.json` (the standard `%LOCALAPPDATA%` location) is created on first run:
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -40,7 +40,7 @@ command (not required; all APIs used work with normal privileges).
 | `deny_unknown_requester` | `true` | Deny when it cannot be determined which window opened the clipboard (spyware can pass NULL) |
 | `log_allows` | `false` | Also log allowed accesses |
 
-Logs: `%LOCALAPPDATA%\CopySec\logs\audit-YYYYMMDD.jsonl`. When a file reaches 1 MB
+Logs: `%USERPROFILE%\AppData\Local\CopySec\logs\audit-YYYYMMDD.jsonl`. When a file reaches 1 MB
 it is rotated to `audit-YYYYMMDD.1.jsonl`, `.2.jsonl`, and so on for the rest of the day.
 On every startup CopySec also checks the whole logs folder: if it exceeds 10 MB, the
 oldest files are deleted until 5 MB or less remains. A `logs_pruned` record notes how

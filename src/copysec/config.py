@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -24,9 +23,7 @@ class Config:
 
 
 def default_config_path() -> Path:
-    local = os.environ.get("LOCALAPPDATA")
-    base = Path(local) if local else Path.home() / "AppData" / "Local"
-    return base / "CopySec" / "config.json"
+    return Path.home() / "AppData" / "Local" / "CopySec" / "config.json"
 
 
 def load_or_create(path: Path) -> Config:

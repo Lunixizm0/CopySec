@@ -25,7 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=None,
-        help="Path to config.json (default: %%LOCALAPPDATA%%\\CopySec\\config.json)",
+        help="Path to config.json (default: %%USERPROFILE%%\\AppData\\Local\\CopySec\\config.json)",
     )
     parser.add_argument(
         "--smoke-seconds",
