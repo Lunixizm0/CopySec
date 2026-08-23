@@ -25,6 +25,13 @@ if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
     exit 1
 fi
 
+ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
+if [ -z "$ORIGIN_URL" ]; then
+    echo "error: no 'origin' remote configured" >&2
+    exit 1
+fi
+REPO_SLUG="$(printf '%s' "$ORIGIN_URL" | sed -E 's#.*[:/]([^/]+/[^/.]+)(\.git)?$#\1#')"
+
 echo "== lint =="
 uv run ruff check .
 
@@ -34,10 +41,32 @@ uv run pytest -q -m "not integration"
 echo "== bumping version to $VERSION =="
 uv version "$VERSION"
 git add pyproject.toml uv.lock
-git commit -m "chore(release): $TAG"
+git diff --cached --quiet || git commit -m "chore(release): $TAG"
+
 git tag "$TAG"
 
-echo
-echo "done. now run:"
-echo "  git push origin main && git push origin $TAG"
-echo "  gh release create $TAG --generate-notes --title $TAG"
+echo "== pushing =="
+git push origin main "$TAG"
+
+echo "== creating github release =="
+gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+gh release create "$TAG" --title "$TAG" --generate-notes
+
+ACTIONS_URL="https://github.com/$REPO_SLUG/actions"
+PYPI_URL="https://pypi.org/pypi/copysec/$VERSION/json"
+echo ""
+echo "$TAG pushed, workflow running: $ACTIONS_URL"
+echo "waiting for $VERSION to appear on PyPI..."
+
+for i in $(seq 1 30); do
+    HTTP_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' "$PYPI_URL")"
+    if [ "$HTTP_STATUS" = "200" ]; then
+        echo "+ $VERSION is live: https://pypi.org/project/copysec/$VERSION/"
+        exit 0
+    fi
+    echo "  not available yet (HTTP $HTTP_STATUS). retrying in 5s [$i/30]"
+    sleep 5
+done
+
+echo "error: $VERSION not found on PyPI after 30 attempts; check $ACTIONS_URL" >&2
+exit 1
