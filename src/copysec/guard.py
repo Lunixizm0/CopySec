@@ -10,6 +10,7 @@ from .winapi import (
     MSG,
     WM_APP,
     WM_CLIPBOARDUPDATE,
+    WM_CLOSE,
     WM_DESTROY,
     WM_QUIT,
     WM_RENDERALLFORMATS,
@@ -152,6 +153,9 @@ class ClipboardGuard:
                     return 0
             if msg == WM_DESTROY:
                 self._on_destroy()
+                return 0
+            if msg == WM_CLOSE:
+                self.audit.event("wm_close_external", rate_key="wm_close_external")
                 return 0
             if msg == self.CMD_PAUSE:
                 self._on_pause()

@@ -25,7 +25,11 @@ class PsutilProcTree:
         chain: tuple[int, ...] = ()
         try:
             proc = psutil.Process(pid)
-            info = ProcInfo(pid, proc.name())
+            try:
+                path = proc.exe()
+            except (psutil.Error, OSError):
+                path = None
+            info = ProcInfo(pid, proc.name(), path)
             chain = tuple(p.pid for p in proc.parents())
         except (psutil.Error, OSError):
             pass
@@ -47,9 +51,14 @@ class PsutilProcTree:
         info = self.resolve(pid)
         if info is None:
             return None
-        if info.exe_lower == UWP_FRAME_HOST_EXE and hwnd:
+        if info.name_lower == UWP_FRAME_HOST_EXE and hwnd:
             inner_pid = winapi.corewindow_pid(hwnd)
             if inner_pid and inner_pid != pid:
                 inner_info = self.resolve(inner_pid)
-                return ProcInfo(inner_pid, inner_info.exe if inner_info else "", host_pid=pid)
+                return ProcInfo(
+                    inner_pid,
+                    inner_info.name if inner_info else "",
+                    inner_info.path if inner_info else None,
+                    host_pid=pid,
+                )
         return info

@@ -23,6 +23,26 @@ class FakeTree:
         return ProcInfo(self._fg, "fgapp.exe")
 
 
+class PathFakeTree:
+    def __init__(self, names, paths, parents, fg):
+        self._names = names
+        self._paths = paths
+        self._parents = parents
+        self._fg = fg
+
+    def resolve(self, pid):
+        name = self._names.get(pid)
+        if not name:
+            return None
+        return ProcInfo(pid, name, self._paths.get(pid))
+
+    def ancestors(self, pid):
+        return tuple(self._parents.get(pid, ()))
+
+    def foreground(self):
+        return ProcInfo(self._fg, "fgapp.exe")
+
+
 def make_policy(**kw):
     defaults = {"allowlist": {"svchost.exe"}, "self_pid": 99999}
     defaults.update(kw)
@@ -88,4 +108,48 @@ def test_uwp_frame_host_opt_in():
 def test_procinfo_host_pid_defaults_to_none():
     info = ProcInfo(42, "app.exe")
     assert info.host_pid is None
-    assert info.exe_lower == "app.exe"
+    assert info.name_lower == "app.exe"
+
+
+def test_allowlist_full_path_matches_exact():
+    policy = make_policy(allowlist={r"C:\Windows\System32\svchost.exe"})
+    policy.tree = PathFakeTree(
+        names={600: "svchost.EXE"},
+        paths={600: r"C:\WINDOWS\system32\svchost.exe"},
+        parents={600: []},
+        fg=100,
+    )
+    d = policy.decide(600)
+    assert d.allowed and d.rule == "allowlist"
+
+
+def test_allowlist_full_path_rejects_same_name_other_dir():
+    policy = make_policy(allowlist={r"C:\Windows\System32\svchost.exe"})
+    policy.tree = PathFakeTree(
+        names={400: "svchost.exe"},
+        paths={400: r"C:\Users\evil\svchost.exe"},
+        parents={400: []},
+        fg=100,
+    )
+    d = policy.decide(400)
+    assert not d.allowed and d.rule == "no-match"
+
+
+def test_allowlist_path_entry_fail_closed_when_path_unknown():
+    policy = make_policy(allowlist={r"C:\Windows\System32\svchost.exe"},)
+    policy.tree = PathFakeTree(
+        names={600: "svchost.exe"},
+        paths={600: None},
+        parents={600: []},
+        fg=100,
+    )
+    d = policy.decide(600)
+    assert not d.allowed and d.rule == "no-match"
+
+
+def test_bare_name_still_matches_even_with_path_entry_present():
+    policy = make_policy(
+        allowlist={r"C:\Windows\System32\svchost.exe", "helper.exe"}
+    )
+    d = policy.decide(200)
+    assert d.allowed and d.rule == "allowlist"

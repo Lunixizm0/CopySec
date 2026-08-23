@@ -48,11 +48,14 @@ def main(argv=None) -> int:
     log_dir = config_path.parent / "logs"
 
     audit = Audit(log_dir, log_allows=cfg.log_allows, verbose=args.verbose)
+    bare = [entry for entry in cfg.allowlist if "/" not in entry and "\\" not in entry]
+    if bare:
+        audit.event("insecure_allowlist", entries=bare)
     tree = PsutilProcTree()
 
     def resolve_name(pid):
         info = tree.resolve(pid)
-        return info.exe if info else None
+        return info.name if info else None
 
     policy = Policy(
         tree,
@@ -60,7 +63,7 @@ def main(argv=None) -> int:
         allow_uwp_frame_host=cfg.allow_uwp_frame_host,
         deny_unknown_requester=cfg.deny_unknown_requester,
     )
-    store = ContentStore(audit, resolve_name)
+    store = ContentStore(audit, resolve_name, max_format_bytes=cfg.max_format_bytes)
     guard = ClipboardGuard(policy, store, audit)
 
     audit.event(
@@ -102,5 +105,6 @@ def main(argv=None) -> int:
         guard.stop()
         if guard.thread:
             guard.thread.join(timeout=5)
+        store.clear()
         audit.event("stopped")
     return exit_code

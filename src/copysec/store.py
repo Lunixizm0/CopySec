@@ -15,14 +15,14 @@ from .winapi import (
 )
 
 
-def text_preview(fmt: int, data: bytes | None) -> str | None:
+def text_preview(fmt: int, data) -> str | None:
     if data is None:
         return None
     try:
         if fmt == CF_UNICODETEXT:
-            text = data.decode("utf-16-le", "replace")
+            text = bytes(data).decode("utf-16-le", "replace")
         elif fmt in (CF_TEXT, CF_OEMTEXT):
-            text = data.decode("cp1252", "replace")
+            text = bytes(data).decode("cp1252", "replace")
         else:
             return None
     except Exception:  # noqa: BLE001
@@ -31,29 +31,52 @@ def text_preview(fmt: int, data: bytes | None) -> str | None:
     return cleaned.strip()
 
 
+DEFAULT_MAX_FORMAT_BYTES = 33_554_432
+
+
 class ContentStore:
-    def __init__(self, audit=None, resolve_name=None):
+    def __init__(self, audit=None, resolve_name=None, max_format_bytes=DEFAULT_MAX_FORMAT_BYTES):
         self.audit = audit
         self._resolve_name = resolve_name or (lambda pid: None)
-        self._payloads: dict[int, bytes] = {}
+        self.max_format_bytes = max(1, int(max_format_bytes))
+        self._payloads: dict[int, bytearray] = {}
         self._registered: list[int] = []
         self._has_bitmap = False
         self._materialized: set[int] = set()
         self.active = False
         self.source: dict | None = None
 
-    def _capture(self, fmt: int, raw_handle) -> bytes | None:
+    def _oversized(self, fmt: int, size: int) -> None:
+        if self.audit:
+            self.audit.event(
+                "oversized_format",
+                rate_key=f"oversized-{fmt}",
+                fmt=fmt,
+                bytes=size,
+                limit=self.max_format_bytes,
+            )
+
+    def _capture(self, fmt: int, raw_handle):
         if raw_handle is None:
             return None
         if fmt == CF_ENHMETAFILE:
-            return winapi.enhmetafile_to_bytes(raw_handle)
-        if fmt == CF_METAFILEPICT:
-            return winapi.capture_metapict(raw_handle)
-        if fmt == CF_PALETTE:
-            return winapi.palette_to_logpalette(raw_handle)
-        return winapi.read_global_bytes(raw_handle)
+            data = winapi.enhmetafile_to_bytes(raw_handle)
+        elif fmt == CF_METAFILEPICT:
+            data = winapi.capture_metapict(raw_handle)
+        elif fmt == CF_PALETTE:
+            data = winapi.palette_to_logpalette(raw_handle)
+        else:
+            size = winapi.kernel32.GlobalSize(raw_handle)
+            if size > self.max_format_bytes:
+                self._oversized(fmt, size)
+                return None
+            data = winapi.read_global_bytes(raw_handle)
+        if data is not None and len(data) > self.max_format_bytes:
+            self._oversized(fmt, len(data))
+            return None
+        return bytearray(data) if data is not None else None
 
-    def _build_handle(self, fmt: int, data: bytes | None):
+    def _build_handle(self, fmt: int, data):
         if fmt == CF_BITMAP:
             if self._has_bitmap and CF_DIB in self._payloads:
                 return winapi.hbitmap_from_dib(self._payloads[CF_DIB])
@@ -78,7 +101,7 @@ class ContentStore:
         else:
             winapi.kernel32.GlobalFree(handle)
 
-    def _place(self, fmt: int, data: bytes | None) -> bool:
+    def _place(self, fmt: int, data) -> bool:
         if fmt == CF_BITMAP:
             if self._has_bitmap and CF_DIB in self._payloads:
                 hbmp = winapi.hbitmap_from_dib(self._payloads[CF_DIB])
@@ -103,7 +126,7 @@ class ContentStore:
             return False
         try:
             formats = winapi.enum_formats()
-            payloads: dict[int, bytes] = {}
+            payloads: dict[int, bytearray] = {}
             registered: list[int] = []
             skipped: list[int] = []
             has_bitmap = False
@@ -122,7 +145,7 @@ class ContentStore:
                 registered.append(fmt)
             if has_bitmap and CF_DIB not in payloads:
                 handle = winapi.user32.GetClipboardData(CF_DIB)
-                synthesized = winapi.read_global_bytes(handle) if handle else None
+                synthesized = self._capture(CF_DIB, handle)
                 if synthesized is not None:
                     payloads[CF_DIB] = synthesized
                     registered.append(CF_DIB)
@@ -130,12 +153,9 @@ class ContentStore:
                 **source,
                 "ts": _dt.datetime.now().astimezone().isoformat(timespec="milliseconds"),
             }
+            self._wipe_payloads()
             if not payloads:
                 self.active = False
-                self._payloads = {}
-                self._registered = []
-                self._has_bitmap = False
-                self._materialized.clear()
                 return True
             self._payloads = payloads
             self._registered = registered
@@ -163,25 +183,30 @@ class ContentStore:
         if not self.active:
             return False
         ok = True
-        if not winapi.open_clipboard_retry(owner):
-            if self.audit:
-                self.audit.event("flush_failed", rate_key="flush_failed", reason="open-clipboard")
-            return False
         try:
-            winapi.user32.EmptyClipboard()
-            for fmt, data in self._payloads.items():
-                if not self._place(fmt, data):
+            if not winapi.open_clipboard_retry(owner):
+                if self.audit:
+                    self.audit.event(
+                        "flush_failed", rate_key="flush_failed", reason="open-clipboard"
+                    )
+                return False
+            try:
+                winapi.user32.EmptyClipboard()
+                for fmt, data in self._payloads.items():
+                    if not self._place(fmt, data):
+                        ok = False
+                if (
+                    self._has_bitmap
+                    and CF_BITMAP not in self._payloads
+                    and CF_DIB in self._payloads
+                    and not self._place(CF_BITMAP, None)
+                ):
                     ok = False
-            if (
-                self._has_bitmap
-                and CF_BITMAP not in self._payloads
-                and CF_DIB in self._payloads
-                and not self._place(CF_BITMAP, None)
-            ):
-                ok = False
+            finally:
+                winapi.close_clipboard()
         finally:
-            winapi.close_clipboard()
-        self.active = False
+            self.active = False
+            self.clear()
         if self.audit:
             self.audit.event("flushed", complete=ok)
         return ok
@@ -220,10 +245,15 @@ class ContentStore:
         self._materialized.clear()
         return True
 
-    def clear(self) -> None:
+    def _wipe_payloads(self) -> None:
+        for data in self._payloads.values():
+            data[:] = bytes(len(data))
         self._payloads.clear()
         self._registered.clear()
         self._materialized.clear()
         self._has_bitmap = False
+
+    def clear(self) -> None:
         self.active = False
         self.source = None
+        self._wipe_payloads()

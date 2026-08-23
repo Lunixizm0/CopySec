@@ -11,6 +11,8 @@ class Audit:
     MAX_FILE_BYTES = 1_000_000
     MAX_DIR_BYTES = 10_000_000
     TARGET_DIR_BYTES = 5_000_000
+    RATE_KEY_TTL = 3600.0
+    RATE_PRUNE_INTERVAL = 600.0
 
     def __init__(self, log_dir: Path, log_allows: bool = False, verbose: bool = False):
         import os
@@ -27,6 +29,7 @@ class Audit:
             self._log_dir = None
         self._last: dict[tuple, float] = {}
         self._dropped: dict[tuple, int] = {}
+        self._rate_pruned_at = time.monotonic()
         self._prune()
 
     def _prune(self) -> None:
@@ -91,8 +94,17 @@ class Audit:
             except (OSError, UnicodeEncodeError):
                 pass
 
+    def _prune_rate_keys(self, now: float) -> None:
+        self._rate_pruned_at = now
+        stale = [key for key, ts in self._last.items() if now - ts > self.RATE_KEY_TTL]
+        for key in stale:
+            del self._last[key]
+            self._dropped.pop(key, None)
+
     def _rate_ok(self, key: tuple) -> bool:
         now = time.monotonic()
+        if now - self._rate_pruned_at >= self.RATE_PRUNE_INTERVAL:
+            self._prune_rate_keys(now)
         last = self._last.get(key)
         if last is not None and now - last < self.MIN_INTERVAL:
             self._dropped[key] = self._dropped.get(key, 0) + 1
@@ -104,7 +116,9 @@ class Audit:
     def _proc_dict(info) -> dict | None:
         if info is None:
             return None
-        record = {"pid": info.pid, "exe": info.exe}
+        record = {"pid": info.pid, "exe": info.name}
+        if info.path:
+            record["path"] = info.path
         if getattr(info, "host_pid", None):
             record["host_pid"] = info.host_pid
         return record

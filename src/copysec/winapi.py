@@ -60,6 +60,7 @@ CF_LOCALE = 16
 CF_DIBV5 = 17
 
 WM_DESTROY = 0x0002
+WM_CLOSE = 0x0010
 WM_QUIT = 0x0012
 WM_TIMER = 0x0113
 WM_RENDERFORMAT = 0x0305
@@ -274,7 +275,7 @@ def read_global_bytes(handle: int | None) -> bytes | None:
         kernel32.GlobalUnlock(handle)
 
 
-def alloc_global_bytes(data: bytes) -> int | None:
+def alloc_global_bytes(data) -> int | None:
     handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
     if not handle:
         return None
@@ -283,7 +284,8 @@ def alloc_global_bytes(data: bytes) -> int | None:
         kernel32.GlobalFree(handle)
         return None
     try:
-        memmove(ptr, data, len(data))
+        src = (c_ubyte * len(data)).from_buffer(data)
+        memmove(ptr, src, len(data))
     finally:
         kernel32.GlobalUnlock(handle)
     return handle
@@ -435,11 +437,11 @@ def parse_dib_header(dib: bytes) -> DibInfo | None:
     return DibInfo(abs(width), height, bpp, pixel_offset, pixel_bytes, True)
 
 
-def hbitmap_from_dib(dib: bytes) -> int | None:
+def hbitmap_from_dib(dib) -> int | None:
     info = parse_dib_header(dib)
     if info is None:
         return None
-    buf = ctypes.create_string_buffer(dib, len(dib))
+    buf = ctypes.create_string_buffer(bytes(dib), len(dib))
     bits = c_void_p(0)
     hbmp = gdi32.CreateDIBSection(
         None, ctypes.addressof(buf), DIB_RGB_COLORS, byref(bits), None, 0
@@ -466,10 +468,10 @@ def enhmetafile_to_bytes(hemf: int | None) -> bytes | None:
     return buf.raw[:written]
 
 
-def bytes_to_enhmetafile(data: bytes) -> int | None:
+def bytes_to_enhmetafile(data) -> int | None:
     if not data:
         return None
-    buf = ctypes.create_string_buffer(data, len(data))
+    buf = ctypes.create_string_buffer(bytes(data), len(data))
     hemf = gdi32.SetEnhMetaFileBits(len(data), buf)
     return hemf or None
 
@@ -478,11 +480,11 @@ def metapict_pack(mm: int, x_ext: int, y_ext: int, bits: bytes) -> bytes:
     return struct.pack("<lll", mm, x_ext, y_ext) + bits
 
 
-def metapict_unpack(payload: bytes) -> tuple[int, int, int, bytes] | None:
+def metapict_unpack(payload) -> tuple[int, int, int, bytes] | None:
     if len(payload) < 12:
         return None
     mm, x_ext, y_ext = struct.unpack_from("<lll", payload, 0)
-    return mm, x_ext, y_ext, payload[12:]
+    return mm, x_ext, y_ext, bytes(payload[12:])
 
 
 def capture_metapict(handle: int | None) -> bytes | None:
@@ -515,7 +517,7 @@ def build_metapict_global(payload: bytes) -> int | None:
     mm, x_ext, y_ext, bits = unpacked
     hmf = None
     if bits:
-        buf = ctypes.create_string_buffer(bits, len(bits))
+        buf = ctypes.create_string_buffer(bytes(bits), len(bits))
         hmf = gdi32.SetMetaFileBitsEx(len(bits), buf)
         if not hmf:
             return None
@@ -556,7 +558,7 @@ def palette_to_logpalette(hpal: int | None) -> bytes | None:
     return struct.pack("<HH", 0x0300, entries_count) + entries_buf.raw[: entries_count * 4]
 
 
-def palette_from_logpalette(data: bytes) -> int | None:
+def palette_from_logpalette(data) -> int | None:
     if len(data) < 4:
         return None
     version, entries = struct.unpack_from("<HH", data, 0)
@@ -564,6 +566,6 @@ def palette_from_logpalette(data: bytes) -> int | None:
         return None
     if len(data) < 4 + entries * 4:
         return None
-    buf = ctypes.create_string_buffer(data, len(data))
+    buf = ctypes.create_string_buffer(bytes(data), len(data))
     hpal = gdi32.CreatePalette(buf)
     return hpal or None

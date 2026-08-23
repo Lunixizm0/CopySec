@@ -78,6 +78,38 @@ def test_rate_limit_does_not_starve(tmp_path, monkeypatch):
     lines = files[0].read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
 
+
+def test_rate_keys_pruned_after_ttl(tmp_path, monkeypatch):
+    from copysec import audit as audit_mod
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(audit_mod.time, "monotonic", lambda: clock["t"])
+    audit = make_audit(tmp_path, 1_000_000)
+    audit.RATE_KEY_TTL = 100.0
+    audit.RATE_PRUNE_INTERVAL = 10.0
+    audit.event("a", rate_key="k1")
+    old_key = ("event", "k1")
+    assert old_key in audit._last
+    clock["t"] += 200.0
+    audit.event("b", rate_key="k2")
+    assert old_key not in audit._last
+    assert old_key not in audit._dropped
+    assert ("event", "k2") in audit._last
+
+
+def test_rate_keys_kept_within_ttl(tmp_path, monkeypatch):
+    from copysec import audit as audit_mod
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(audit_mod.time, "monotonic", lambda: clock["t"])
+    audit = make_audit(tmp_path, 1_000_000)
+    audit.RATE_KEY_TTL = 100.0
+    audit.RATE_PRUNE_INTERVAL = 10.0
+    audit.event("a", rate_key="k1")
+    clock["t"] += 50.0
+    audit.event("b", rate_key="k2")
+    assert ("event", "k1") in audit._last
+
 def test_prune_deletes_oldest_over_budget(tmp_path):
     audit = make_audit(tmp_path, 1_000_000)
     audit.MAX_DIR_BYTES = 1000

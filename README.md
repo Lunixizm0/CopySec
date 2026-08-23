@@ -15,8 +15,11 @@ system forwards the request to CopySec as a `WM_RENDERFORMAT` message; at that m
   process (child/grandchild), allowlist
 - Denied: no format is rendered, the reader receives `NULL`, and the event is logged
 
-The real content is kept in memory; the clipboard always remains owned by CopySec.
-On exit or pause, the real data is written back to the clipboard.
+The real content is kept in memory only while CopySec owns the clipboard; the clipboard
+always remains owned by CopySec. On exit or pause, the real data is written back to the
+clipboard and the in-memory copies are overwritten and released. Password manager
+auto-clear timers keep working: when the source app empties the clipboard, CopySec sees
+the change and drops its snapshot as well.
 
 ## Installation and running
 
@@ -27,7 +30,10 @@ uv run copysec --no-tray --verbose   # console mode + live log
 ```
 
 To run as administrator, open PowerShell via "Run as administrator" and run the same
-command (not required; all APIs used work with normal privileges).
+command. Not required; all APIs used work with normal privileges. Running elevated is
+recommended when you want protection against other processes on the machine: Windows
+(UIPI) then blocks foreign processes from posting control messages to the guard window,
+so a same-user process cannot pause or close the guard silently.
 
 ## Configuration
 
@@ -35,10 +41,11 @@ command (not required; all APIs used work with normal privileges).
 
 | Field | Default | Meaning |
 |---|---|---|
-| `allowlist` | `["svchost.exe"]` | Always-allowed exe names (case-insensitive). `svchost.exe` covers the Win+V clipboard history service (cbdhsvc) |
+| `allowlist` | `["C:\\Windows\\System32\\svchost.exe"]` | Always-allowed programs (case-insensitive). A full image path pins the entry to that exact file; a bare name like `"foo.exe"` matches any process with that name regardless of where it loads from (legacy behavior, an `insecure_allowlist` record is logged at startup). The default covers the Win+V clipboard history service (cbdhsvc inside the system svchost.exe) |
 | `allow_uwp_frame_host` | `false` | Legacy escape hatch: allows every request from `ApplicationFrameHost.exe` itself. Regular UWP paste works out of the box because CopySec resolves the frame-hosted app's real process; enable only if some packaged app still fails |
 | `deny_unknown_requester` | `true` | Deny when it cannot be determined which window opened the clipboard (spyware can pass NULL) |
 | `log_allows` | `false` | Also log allowed accesses |
+| `max_format_bytes` | `33554432` | Skip clipboard formats larger than this many bytes on adopt (logged as `oversized_format`); guards the guard's memory against hostile oversized payloads |
 
 Logs: `%USERPROFILE%\AppData\Local\CopySec\logs\audit-YYYYMMDD.jsonl`. When a file reaches 1 MB
 it is rotated to `audit-YYYYMMDD.1.jsonl`, `.2.jsonl`, and so on for the rest of the day.
@@ -109,8 +116,9 @@ Manual scenario:
 
 - **Pasted content came out empty:** The reading app is not foreground or was denied.
   Check the `deny` lines printed with `--verbose` (the `rule` field explains why:
-  `no-match`, `unknown-requester`, ...). If needed add the exe name to `allowlist`,
-  or for exotic packaged apps that still fail enable `allow_uwp_frame_host`.
+  `no-match`, `unknown-requester`, ...). If needed add an entry to `allowlist`
+  (prefer a full image path so only that exact binary matches), or for exotic packaged
+  apps that still fail enable `allow_uwp_frame_host`.
 - **Leave the clipboard cleanly:** Close CopySec with Ctrl+C or tray > Exit (the real
   data is written back to the clipboard). If you force-kill it from Task Manager the
   delayed-render data goes away too and the clipboard ends up empty; that is Windows'

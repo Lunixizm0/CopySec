@@ -7,10 +7,13 @@ from pathlib import Path
 
 @dataclass
 class Config:
-    allowlist: list[str] = field(default_factory=lambda: ["svchost.exe"])
+    allowlist: list[str] = field(
+        default_factory=lambda: [r"C:\Windows\System32\svchost.exe"]
+    )
     allow_uwp_frame_host: bool = False
     deny_unknown_requester: bool = True
     log_allows: bool = False
+    max_format_bytes: int = 33_554_432
 
     def apply_dict(self, data: dict) -> None:
         if not isinstance(data, dict):
@@ -20,6 +23,9 @@ class Config:
         for key in ("allow_uwp_frame_host", "deny_unknown_requester", "log_allows"):
             if key in data and isinstance(data[key], bool):
                 setattr(self, key, data[key])
+        value = data.get("max_format_bytes")
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            self.max_format_bytes = value
 
 
 def default_config_path() -> Path:
