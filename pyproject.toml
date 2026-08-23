@@ -1,0 +1,32 @@
+[project]
+name = "copysec"
+version = "0.1.0"
+description = "Clipboard guard: only the active application and its process tree can access the clipboard"
+readme = "README.md"
+authors = [
+    { name = "Lunixizm0", email = "copysec@lunixizm.website" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "pillow>=12.3.0",
+    "psutil>=7.2.2",
+    "pystray>=0.19.5",
+]
+
+[project.scripts]
+copysec = "copysec.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.4",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: real desktop end-to-end tests via PowerShell matrices (slow)",
+]
