@@ -1,6 +1,6 @@
 [project]
 name = "copysec"
-version = "0.1.0"
+version = "0.9.9"
 description = "Clipboard guard: only the active application and its process tree can access the clipboard"
 readme = "README.md"
 authors = [
